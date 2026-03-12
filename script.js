@@ -213,6 +213,9 @@ class WheelOfFortune {
   constructor() {
     this.names = [];
     this.isSpinning = false;
+    this.extractionHistory = [];
+    this.playerCounter = 1;
+    this.currentPlayerName = "";
     this.init();
   }
 
@@ -221,6 +224,7 @@ class WheelOfFortune {
     this.bindEvents();
     this.updateWheel();
     this.updateNamesList();
+    this.updatePlayerDisplay();
   }
 
   bindEvents() {
@@ -248,12 +252,30 @@ class WheelOfFortune {
     document
       .getElementById("exportJsonBtn")
       ?.addEventListener("click", () => this.exportJson());
+    document
+      .getElementById("clearHistoryBtn")
+      .addEventListener("click", () => this.clearHistory());
+
+    // Player field: edit/save/cancel
+    const playerEditBtn = document.getElementById("playerEditBtn");
+    const playerSaveBtn = document.getElementById("playerSaveBtn");
+    const playerCancelBtn = document.getElementById("playerCancelBtn");
+    const playerInput = document.getElementById("currentPlayerInput");
+
+    playerEditBtn.addEventListener("click", () => this.openPlayerEdit());
+    playerSaveBtn.addEventListener("click", () => this.savePlayerName());
+    playerCancelBtn.addEventListener("click", () => this.closePlayerEdit());
+    playerInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") this.savePlayerName();
+      if (e.key === "Escape") this.closePlayerEdit();
+    });
   }
 
   saveToLocalStorage() {
     try {
       const data = JSON.stringify(this.names);
       localStorage.setItem("wheelNames", data);
+      localStorage.setItem("currentPlayerName", this.currentPlayerName || "");
     } catch (e) {
       console.error("Errore nel salvataggio in local storage:", e);
       notifications.show("Errore nel salvataggio dei dati", "error");
@@ -262,6 +284,7 @@ class WheelOfFortune {
 
   loadFromLocalStorage() {
     try {
+      this.currentPlayerName = localStorage.getItem("currentPlayerName") || "";
       const data = localStorage.getItem("wheelNames");
       if (data) {
         const parsed = JSON.parse(data);
@@ -518,16 +541,129 @@ class WheelOfFortune {
     namesList.innerHTML = this.names
       .map(
         (name, index) => `
-            <div class="name-item">
-                <span class="name-text">${name}</span>
+            <div class="name-item" id="name-item-${index}">
+                <span class="name-number">${index + 1}.</span>
+                <input
+                  class="name-inline-input"
+                  id="name-input-${index}"
+                  value="${name.replace(/"/g, "&quot;").replace(/`/g, "&#96;")}"
+                  data-original="${name.replace(/"/g, "&quot;").replace(/`/g, "&#96;")}"
+                  data-index="${index}"
+                />
                 <div class="name-actions">
-                    <button class="btn btn-secondary btn-small" onclick="wheel.editName(${index})" title="Modifica nome">✏️</button>
+                    <button class="btn btn-success btn-small name-save-btn" id="save-btn-${index}" onclick="wheel.saveInlineEdit(${index})" title="Salva" style="display:none">✔️</button>
                     <button class="btn btn-danger btn-small" onclick="wheel.deleteName(${index})" title="Elimina nome">🗑️</button>
                 </div>
             </div>
         `,
       )
       .join("");
+
+    // Bind inline edit events
+    this.names.forEach((_, index) => {
+      const input = document.getElementById(`name-input-${index}`);
+      const saveBtn = document.getElementById(`save-btn-${index}`);
+      if (!input) return;
+
+      input.addEventListener("input", () => {
+        const changed = input.value.trim() !== input.dataset.original;
+        saveBtn.style.display = changed ? "inline-flex" : "none";
+      });
+
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          this.saveInlineEdit(index);
+        }
+        if (e.key === "Escape") {
+          input.value = input.dataset.original;
+          saveBtn.style.display = "none";
+        }
+      });
+
+      input.addEventListener("blur", () => {
+        const changed = input.value.trim() !== input.dataset.original;
+        if (changed) this.saveInlineEdit(index);
+      });
+    });
+  }
+
+  openPlayerEdit() {
+    if (this.isSpinning) return;
+    const display = document.getElementById("playerDisplay");
+    const editRow = document.getElementById("playerEditRow");
+    const input = document.getElementById("currentPlayerInput");
+    display.style.display = "none";
+    editRow.style.display = "flex";
+    input.value = this.currentPlayerName || "";
+    input.focus();
+    input.select();
+  }
+
+  savePlayerName() {
+    const input = document.getElementById("currentPlayerInput");
+    const name = input.value.trim();
+    this.currentPlayerName = name;
+    this.updatePlayerDisplay();
+    this.closePlayerEdit(false);
+    localStorage.setItem("currentPlayerName", name);
+  }
+
+  closePlayerEdit(restore = true) {
+    const display = document.getElementById("playerDisplay");
+    const editRow = document.getElementById("playerEditRow");
+    display.style.display = "flex";
+    editRow.style.display = "none";
+  }
+
+  updatePlayerDisplay() {
+    const nameEl = document.getElementById("playerDisplayName");
+    nameEl.textContent = this.currentPlayerName || "—";
+    nameEl.classList.toggle("player-name-empty", !this.currentPlayerName);
+  }
+
+  lockPlayerField(locked) {
+    const field = document.getElementById("playerField");
+    const editBtn = document.getElementById("playerEditBtn");
+    field.classList.toggle("player-locked", locked);
+    editBtn.disabled = locked;
+    this.closePlayerEdit();
+  }
+
+  saveInlineEdit(index) {
+    if (this.isSpinning) {
+      notifications.show(
+        "Non puoi modificare i nomi mentre la ruota gira",
+        "warning",
+      );
+      return;
+    }
+    const input = document.getElementById(`name-input-${index}`);
+    if (!input) return;
+    const newName = input.value.trim();
+    const oldName = input.dataset.original;
+
+    if (!newName) {
+      notifications.show("Il nome non può essere vuoto", "warning");
+      input.value = oldName;
+      const sb = document.getElementById(`save-btn-${index}`);
+      if (sb) sb.style.display = "none";
+      return;
+    }
+    if (this.names.includes(newName) && newName !== oldName) {
+      notifications.show("Questo nome è già presente nella lista", "warning");
+      input.value = oldName;
+      const sb = document.getElementById(`save-btn-${index}`);
+      if (sb) sb.style.display = "none";
+      return;
+    }
+
+    this.names[index] = newName;
+    this.updateWheel();
+    this.updateNamesList();
+    this.saveToLocalStorage();
+    this.hideResult();
+    notifications.show(`Nome aggiornato: "${newName}"`, "success");
   }
 
   spinWheel() {
@@ -548,6 +684,7 @@ class WheelOfFortune {
     const spinButton = document.getElementById("spinButton");
     spinButton.disabled = true;
     spinButton.textContent = "🔄 Girando...";
+    this.lockPlayerField(true);
 
     document
       .querySelectorAll(".btn-danger, .btn-secondary")
@@ -569,7 +706,15 @@ class WheelOfFortune {
 
     setTimeout(() => {
       const winner = this.names[winnerIndex];
-      this.showResult(winner);
+      const playerName =
+        this.currentPlayerName || `Giocatore ${this.playerCounter}`;
+      this.showResult(winner, playerName);
+      this.addToHistory(playerName, winner);
+      // Prepare next player
+      this.playerCounter++;
+      this.currentPlayerName = "";
+      localStorage.setItem("currentPlayerName", "");
+      this.updatePlayerDisplay();
 
       const paths = svg.querySelectorAll(".wheel-section");
       paths.forEach((path, i) => {
@@ -579,6 +724,7 @@ class WheelOfFortune {
       this.isSpinning = false;
       spinButton.disabled = false;
       spinButton.textContent = "🎲 Gira la Ruota!";
+      this.lockPlayerField(false);
 
       document
         .querySelectorAll(".btn-danger, .btn-secondary")
@@ -588,19 +734,76 @@ class WheelOfFortune {
       svg.classList.remove("spinning");
 
       notifications.show(
-        `🎉 Il vincitore è: ${winner}!`,
+        `🎉 Estratto: ${winner}!`,
         "success",
-        "Abbiamo un vincitore!",
+        "Estrazione completata!",
         8000,
       );
     }, 4000);
   }
 
-  showResult(winner) {
+  showResult(winner, playerName) {
     const resultDisplay = document.getElementById("resultDisplay");
     const winnerName = document.getElementById("winnerName");
-    winnerName.textContent = winner;
+    winnerName.innerHTML = `<span class="result-player">👤 ${playerName}</span><span class="result-arrow">→</span><span class="result-item">🎯 ${winner}</span>`;
     resultDisplay.classList.add("show");
+  }
+
+  addToHistory(playerName, result) {
+    const entry = {
+      playerName,
+      result,
+      time: new Date().toLocaleTimeString("it-IT", {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    };
+    this.extractionHistory.unshift(entry);
+    this.renderHistory();
+  }
+
+  renderHistory() {
+    const container = document.getElementById("extractionHistory");
+    const list = document.getElementById("historyList");
+    if (this.extractionHistory.length === 0) {
+      container.style.display = "none";
+      return;
+    }
+    container.style.display = "block";
+    list.innerHTML = this.extractionHistory
+      .map(
+        (e, i) => `
+      <div class="history-item">
+        <span class="history-num">${this.extractionHistory.length - i}</span>
+        <span class="history-player">👤 <span class="history-player-name" contenteditable="true" onblur="wheel.updateHistoryPlayer(${i}, this.textContent)">${e.playerName}</span></span>
+        <span class="history-arrow">→</span>
+        <span class="history-result">🎯 ${e.result}</span>
+        <span class="history-time">${e.time}</span>
+        <button class="btn btn-danger btn-small" onclick="wheel.deleteHistoryItem(${i})">🗑️</button>
+      </div>
+    `,
+      )
+      .join("");
+  }
+
+  updateHistoryPlayer(index, newName) {
+    const trimmed = newName.trim();
+    if (trimmed) this.extractionHistory[index].playerName = trimmed;
+    else this.renderHistory();
+  }
+
+  deleteHistoryItem(index) {
+    this.extractionHistory.splice(index, 1);
+    this.renderHistory();
+  }
+
+  clearHistory() {
+    this.extractionHistory = [];
+    this.playerCounter = 1;
+    this.currentPlayerName = "";
+    document.getElementById("currentPlayerInput").placeholder =
+      "Nome giocatore...";
+    this.renderHistory();
   }
 
   hideResult = () =>
